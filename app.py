@@ -10,29 +10,29 @@ import os
 conn = sqlite3.connect('ferreteria.db', check_same_thread=False)
 c = conn.cursor()
 
-# Crear tablas si no existen
+# Crear tablas con campo usuario
 c.execute('''CREATE TABLE IF NOT EXISTS inventario 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-              producto TEXT UNIQUE, 
+              producto TEXT, 
               cantidad INTEGER, 
-              precio REAL)''')
+              precio REAL, 
+              usuario TEXT, 
+              UNIQUE(producto, usuario))''')
 c.execute('''CREATE TABLE IF NOT EXISTS cotizaciones 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, 
               cliente TEXT, 
               total REAL, 
-              fecha TEXT)''')
+              fecha TEXT, 
+              usuario TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS usuarios 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, 
               usuario TEXT UNIQUE, 
               contraseña TEXT)''')
 conn.commit()
 
-# Insertar usuarios predefinidos (solo la primera vez)
+# Insertar usuarios predefinidos
 def inicializar_usuarios():
-    usuarios_predefinidos = [
-        ("admin", "admin123"),  # usuario: admin, contraseña: admin123
-        ("user", "user456")     # usuario: user, contraseña: user456
-    ]
+    usuarios_predefinidos = [("admin", "admin123"), ("user", "user456")]
     for usuario, contraseña in usuarios_predefinidos:
         hashed_pwd = hashlib.sha256(contraseña.encode()).hexdigest()
         c.execute("INSERT OR IGNORE INTO usuarios (usuario, contraseña) VALUES (?, ?)", (usuario, hashed_pwd))
@@ -40,29 +40,30 @@ def inicializar_usuarios():
 
 inicializar_usuarios()
 
-# Configuración inicial de la aplicación
+# Configuración inicial
 st.title("Gestor de Ferretería")
 
 # Funciones auxiliares
 @st.cache_data
-def cargar_inventario(_conn):
-    return pd.read_sql_query("SELECT producto, cantidad, precio FROM inventario", _conn)
+def cargar_inventario(_conn, usuario):
+    return pd.read_sql_query("SELECT producto, cantidad, precio FROM inventario WHERE usuario = ?", _conn, params=(usuario,))
 
-def guardar_inventario(producto, cantidad, precio):
-    c.execute("INSERT OR REPLACE INTO inventario (producto, cantidad, precio) VALUES (?, ?, ?)", 
-              (producto, cantidad, precio))
+def guardar_inventario(producto, cantidad, precio, usuario):
+    c.execute("INSERT OR REPLACE INTO inventario (producto, cantidad, precio, usuario) VALUES (?, ?, ?, ?)", 
+              (producto, cantidad, precio, usuario))
     conn.commit()
     st.cache_data.clear()
 
-def actualizar_inventario(producto, cantidad):
-    c.execute("UPDATE inventario SET cantidad = cantidad - ? WHERE producto = ?", (cantidad, producto))
+def actualizar_inventario(producto, cantidad, usuario):
+    c.execute("UPDATE inventario SET cantidad = cantidad - ? WHERE producto = ? AND usuario = ?", 
+              (cantidad, producto, usuario))
     conn.commit()
     st.cache_data.clear()
 
-def guardar_cotizacion(cliente, total):
+def guardar_cotizacion(cliente, total, usuario):
     fecha = datetime.now().strftime('%Y-%m-%d')
-    c.execute("INSERT INTO cotizaciones (cliente, total, fecha) VALUES (?, ?, ?)", 
-              (cliente, total, fecha))
+    c.execute("INSERT INTO cotizaciones (cliente, total, fecha, usuario) VALUES (?, ?, ?, ?)", 
+              (cliente, total, fecha, usuario))
     conn.commit()
 
 def hash_password(password):
@@ -91,13 +92,14 @@ if not st.session_state["user"]:
         else:
             st.error("Usuario o contraseña incorrectos.")
 else:
-    st.sidebar.write(f"Bienvenido, {st.session_state['user']}")
+    usuario_actual = st.session_state["user"]
+    st.sidebar.write(f"Bienvenido, {usuario_actual}")
     if st.sidebar.button("Cerrar Sesión"):
         del st.session_state["user"]
         st.success("Sesión cerrada con éxito.")
         st.rerun()
 
-    # Menú principal (solo visible si está autenticado)
+    # Menú principal
     menu = st.sidebar.selectbox("Menú", ["Inventario", "Catálogo", "Cotizaciones", "Reportes"])
 
     # Sección 1: Gestión de Inventario
@@ -111,11 +113,11 @@ else:
             submit = st.form_submit_button(label="Agregar Producto")
             
             if submit:
-                guardar_inventario(producto, cantidad, precio)
+                guardar_inventario(producto, cantidad, precio, usuario_actual)
                 st.success(f"Producto '{producto}' agregado o actualizado con éxito.")
         
         st.subheader("Inventario Actual")
-        inventario_df = cargar_inventario(conn)
+        inventario_df = cargar_inventario(conn, usuario_actual)
         st.dataframe(inventario_df)
         
         stock_bajo = inventario_df[inventario_df["cantidad"] < 5]
@@ -126,7 +128,7 @@ else:
     # Sección 2: Catálogo
     elif menu == "Catálogo":
         st.header("Catálogo de Productos")
-        inventario_df = cargar_inventario(conn)
+        inventario_df = cargar_inventario(conn, usuario_actual)
         if not inventario_df.empty:
             st.write("Lista de productos disponibles:")
             for index, row in inventario_df.iterrows():
@@ -139,7 +141,7 @@ else:
         st.header("Generar Cotización")
         
         cliente = st.text_input("Nombre del Cliente")
-        inventario_df = cargar_inventario(conn)
+        inventario_df = cargar_inventario(conn, usuario_actual)
         productos_cotizar = st.multiselect("Seleccionar Productos", inventario_df["producto"].tolist())
         cantidades = {}
         
@@ -192,8 +194,8 @@ else:
                     pdf.output(pdf_file)
                     
                     for prod in productos_cotizar:
-                        actualizar_inventario(prod, cantidades[prod])
-                    guardar_cotizacion(cliente, total)
+                        actualizar_inventario(prod, cantidades[prod], usuario_actual)
+                    guardar_cotizacion(cliente, total, usuario_actual)
                     
                     st.success("Cotización generada y stock actualizado.")
                     with open(pdf_file, "rb") as file:
@@ -204,7 +206,8 @@ else:
     # Sección 4: Reportes
     elif menu == "Reportes":
         st.header("Reportes")
-        cotizaciones_df = pd.read_sql_query("SELECT cliente, total, fecha FROM cotizaciones", conn)
+        cotizaciones_df = pd.read_sql_query("SELECT cliente, total, fecha FROM cotizaciones WHERE usuario = ?", 
+                                            conn, params=(usuario_actual,))
         if cotizaciones_df.empty:
             st.info("No hay cotizaciones registradas aún.")
         else:

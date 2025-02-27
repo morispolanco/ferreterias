@@ -1,2 +1,4 @@
-pandas
-fpdf
+streamlit==1.42.0 
+pandas 
+fpdf 
+authlib

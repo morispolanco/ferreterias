@@ -3,20 +3,8 @@ import pandas as pd
 import sqlite3
 from datetime import datetime
 from fpdf import FPDF
-from authlib.integrations.requests_client import OAuth2Session
+import hashlib
 import os
-import json
-
-# Configuración de OpenID Connect (ajusta según tu proveedor)
-OIDC_PROVIDER = {
-    "authorization_endpoint": "https://dev-60yow3raw63cgke4.us.auth0.com",  # Ejemplo: Google
-    "token_endpoint": "https://oauth2.googleapis.com/token",
-    "userinfo_endpoint": "https://openidconnect.googleapis.com/v1/userinfo",
-    "client_id": "heDVFbcZy9EUDlf76Yki626Mfuup77ST",  # Reemplaza con tu Client ID del proveedor
-    "client_secret": "TlnPlkvE8dzodXSevqaYJRUQQTiYejWc7MJia6P9-4MLLy3wk-PmFF-wuwaTzDQxu",  # Reemplaza con tu Client Secret
-    "redirect_uri": "http://localhost:8501",  # URI de redirección de tu app
-    "scope": "openid email profile"
-}
 
 # Conexión a la base de datos SQLite
 conn = sqlite3.connect('ferreteria.db', check_same_thread=False)
@@ -33,7 +21,24 @@ c.execute('''CREATE TABLE IF NOT EXISTS cotizaciones
               cliente TEXT, 
               total REAL, 
               fecha TEXT)''')
+c.execute('''CREATE TABLE IF NOT EXISTS usuarios 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+              usuario TEXT UNIQUE, 
+              contraseña TEXT)''')
 conn.commit()
+
+# Insertar usuarios predefinidos (solo la primera vez)
+def inicializar_usuarios():
+    usuarios_predefinidos = [
+        ("admin", "admin123"),  # usuario: admin, contraseña: admin123
+        ("user", "user456")     # usuario: user, contraseña: user456
+    ]
+    for usuario, contraseña in usuarios_predefinidos:
+        hashed_pwd = hashlib.sha256(contraseña.encode()).hexdigest()
+        c.execute("INSERT OR IGNORE INTO usuarios (usuario, contraseña) VALUES (?, ?)", (usuario, hashed_pwd))
+    conn.commit()
+
+inicializar_usuarios()
 
 # Configuración inicial de la aplicación
 st.title("Gestor de Ferretería")
@@ -60,23 +65,13 @@ def guardar_cotizacion(cliente, total):
               (cliente, total, fecha))
     conn.commit()
 
-# Autenticación con OpenID Connect
-def get_auth_url():
-    client = OAuth2Session(OIDC_PROVIDER["client_id"], OIDC_PROVIDER["client_secret"], 
-                           redirect_uri=OIDC_PROVIDER["redirect_uri"], scope=OIDC_PROVIDER["scope"])
-    auth_uri, state = client.create_authorization_url(OIDC_PROVIDER["authorization_endpoint"])
-    st.session_state["oidc_state"] = state
-    return auth_uri
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
-def handle_callback():
-    if "code" in st.query_params and "oidc_state" in st.session_state:
-        client = OAuth2Session(OIDC_PROVIDER["client_id"], OIDC_PROVIDER["client_secret"], 
-                               redirect_uri=OIDC_PROVIDER["redirect_uri"], state=st.session_state["oidc_state"])
-        token = client.fetch_token(OIDC_PROVIDER["token_endpoint"], code=st.query_params["code"])
-        user_info = client.get(OIDC_PROVIDER["userinfo_endpoint"]).json()
-        st.session_state["user"] = user_info
-        st.session_state["token"] = token
-        st.query_params.clear()
+def verificar_usuario(usuario, contraseña):
+    hashed_pwd = hash_password(contraseña)
+    c.execute("SELECT * FROM usuarios WHERE usuario = ? AND contraseña = ?", (usuario, hashed_pwd))
+    return c.fetchone() is not None
 
 # Estado de autenticación
 if "user" not in st.session_state:
@@ -84,19 +79,21 @@ if "user" not in st.session_state:
 
 # Lógica de autenticación
 if not st.session_state["user"]:
-    st.write("Por favor, inicia sesión para acceder a la aplicación.")
-    if st.button("Iniciar Sesión con OpenID"):
-        auth_url = get_auth_url()
-        st.markdown(f"[Haz clic aquí para autenticarte]({auth_url})")
+    st.subheader("Iniciar Sesión")
+    usuario = st.text_input("Usuario")
+    contraseña = st.text_input("Contraseña", type="password")
     
-    # Manejar callback de OIDC
-    handle_callback()
+    if st.button("Iniciar Sesión"):
+        if verificar_usuario(usuario, contraseña):
+            st.session_state["user"] = usuario
+            st.success(f"Bienvenido, {usuario}!")
+            st.rerun()
+        else:
+            st.error("Usuario o contraseña incorrectos.")
 else:
-    st.sidebar.write(f"Bienvenido, {st.session_state['user']['email']}")
+    st.sidebar.write(f"Bienvenido, {st.session_state['user']}")
     if st.sidebar.button("Cerrar Sesión"):
         del st.session_state["user"]
-        del st.session_state["token"]
-        st.session_state["oidc_state"] = None
         st.success("Sesión cerrada con éxito.")
         st.rerun()
 
@@ -217,4 +214,4 @@ else:
             st.write(f"${cotizaciones_df['total'].sum():.2f}")
 
 # Instrucciones
-st.sidebar.info("Instala: `pip install streamlit==1.42.0 pandas fpdf authlib` y ejecuta con `streamlit run nombre_del_archivo.py`.")
+st.sidebar.info("Instala: `pip install streamlit==1.42.0 pandas fpdf` y ejecuta con `streamlit run nombre_del_archivo.py`. Usuarios: admin/admin123, user/user456")

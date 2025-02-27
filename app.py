@@ -9,11 +9,11 @@ import json
 
 # Configuración de OpenID Connect (ajusta según tu proveedor)
 OIDC_PROVIDER = {
-    "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",  # Ejemplo: Google
+    "authorization_endpoint": "https://dev-60yow3raw63cgke4.us.auth0.com",  # Ejemplo: Google
     "token_endpoint": "https://oauth2.googleapis.com/token",
     "userinfo_endpoint": "https://openidconnect.googleapis.com/v1/userinfo",
-    "client_id": "TU_CLIENT_ID",  # Reemplaza con tu Client ID del proveedor
-    "client_secret": "TU_CLIENT_SECRET",  # Reemplaza con tu Client Secret
+    "client_id": "heDVFbcZy9EUDlf76Yki626Mfuup77ST",  # Reemplaza con tu Client ID del proveedor
+    "client_secret": "TlnPlkvE8dzodXSevqaYJRUQQTiYejWc7MJia6P9-4MLLy3wk-PmFF-wuwaTzDQxu",  # Reemplaza con tu Client Secret
     "redirect_uri": "http://localhost:8501",  # URI de redirección de tu app
     "scope": "openid email profile"
 }

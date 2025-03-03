@@ -85,46 +85,19 @@ else:
     inventario = cargar_inventario()
     ventas = cargar_ventas()
 
-    # Barra lateral
+    # Barra lateral con menú
     menu = st.sidebar.selectbox(
         "Menú",
-        ["Ver Inventario", "Agregar Producto", "Buscar Producto", "Editar Producto", "Eliminar Producto", 
-         "Reporte", "Historial", "Cargar CSV", "Registrar Ventas"]
+        ["Ver Inventario", "Registrar Ventas", "Cargar CSV", "Agregar Producto", "Buscar Producto", 
+         "Editar Producto", "Eliminar Producto", "Reporte", "Historial"]
     )
     st.sidebar.write(f"Usuario: {st.session_state.usuario}")
     if st.sidebar.button("Cerrar Sesión"):
         st.session_state.authenticated = False
         st.session_state.pop("usuario")
 
-    # Opción: Cargar CSV
-    if menu == "Cargar CSV":
-        st.subheader("Cargar Inventario desde CSV")
-        uploaded_file = st.file_uploader("Selecciona un archivo CSV", type=["csv"])
-        if uploaded_file is not None:
-            try:
-                nuevo_inventario = pd.read_csv(uploaded_file)
-                columnas_esperadas = ["ID", "Producto", "Categoría", "Cantidad", "Precio", "Proveedor", "Última Actualización"]
-                if not all(col in nuevo_inventario.columns for col in columnas_esperadas):
-                    st.error("El CSV debe contener las columnas: ID, Producto, Categoría, Cantidad, Precio, Proveedor, Última Actualización")
-                else:
-                    if nuevo_inventario["ID"].duplicated().any():
-                        st.error("El CSV contiene IDs duplicados. Corrige el archivo y vuelve a intentarlo.")
-                    elif nuevo_inventario["Cantidad"].lt(0).any() or nuevo_inventario["Precio"].lt(0).any():
-                        st.error("Cantidad y Precio no pueden ser negativos.")
-                    else:
-                        st.write("Vista previa del CSV:")
-                        st.dataframe(nuevo_inventario)
-                        if st.button("Confirmar Carga"):
-                            inventario = nuevo_inventario.copy()
-                            guardar_inventario(inventario)
-                            registrar_cambio("Cargar CSV", "Todos", st.session_state.usuario)
-                            st.success("Inventario actualizado desde el CSV con éxito!")
-            except Exception as e:
-                st.error(f"Error al procesar el archivo: {str(e)}")
-        st.info("El CSV debe tener las columnas: ID, Producto, Categoría, Cantidad, Precio, Proveedor, Última Actualización.")
-
     # Opción 1: Ver Inventario
-    elif menu == "Ver Inventario":
+    if menu == "Ver Inventario":
         st.subheader("Inventario Actual")
         if inventario.empty:
             st.warning("El inventario está vacío.")
@@ -156,39 +129,124 @@ else:
                 mime="text/csv"
             )
 
-    # Opción 2: Agregar Producto
-    elif menu == "Agregar Producto":
-        st.subheader("Agregar Nuevo Producto")
-        with st.form(key="agregar_form"):
-            id_producto = st.text_input("ID del Producto (único)")
-            nombre = st.text_input("Nombre del Producto")
-            categoria = st.selectbox("Categoría", ["Herramientas", "Materiales", "Pinturas", "Electricidad", "Otros"])
-            cantidad = st.number_input("Cantidad", min_value=0, step=1)
-            precio = st.number_input("Precio Unitario", min_value=0.0, step=0.01)
-            proveedor = st.text_input("Proveedor")
-            submit_button = st.form_submit_button(label="Agregar")
+    # Opción 2: Registrar Ventas
+    elif menu == "Registrar Ventas":
+        st.subheader("Registrar Ventas del Día")
+        inventario["ID"] = inventario["ID"].astype(str)
+        productos_disponibles = [f"{row['Producto']} (ID: {row['ID']}, Stock: {row['Cantidad']})" 
+                                for _, row in inventario.iterrows() if row['Cantidad'] > 0]
+        
+        with st.form(key="ventas_form"):
+            if productos_disponibles:
+                producto_seleccionado = st.selectbox("Selecciona un Producto", productos_disponibles)
+                cantidad_vendida = st.number_input("Cantidad Vendida", min_value=1, step=1)
+                submit_venta = st.form_submit_button(label="Registrar Venta")
 
-            if submit_button:
-                if not id_producto or not nombre:
-                    st.error("El ID y el Nombre son obligatorios.")
-                elif id_producto in inventario["ID"].values:
-                    st.error("El ID ya existe. Use uno diferente.")
+                if submit_venta:
+                    try:
+                        id_venta = producto_seleccionado.split("ID: ")[1].split(",")[0].strip()
+                        st.write(f"ID extraído para depuración: '{id_venta}'")  # Depuración
+
+                        if id_venta in inventario["ID"].values:
+                            producto = inventario[inventario["ID"] == id_venta].iloc[0]
+                            if producto["Cantidad"] >= cantidad_vendida:
+                                inventario.loc[inventario["ID"] == id_venta, "Cantidad"] -= cantidad_vendida
+                                inventario.loc[inventario["ID"] == id_venta, "Última Actualización"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                guardar_inventario(inventario)
+
+                                total_venta = cantidad_vendida * producto["Precio"]
+                                nueva_venta = pd.DataFrame({
+                                    "Fecha": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                                    "ID": [id_venta],
+                                    "Producto": [producto["Producto"]],
+                                    "Cantidad Vendida": [cantidad_vendida],
+                                    "Precio Unitario": [producto["Precio"]],
+                                    "Total": [total_venta],
+                                    "Usuario": [st.session_state.usuario]
+                                })
+                                ventas = pd.concat([ventas, nueva_venta], ignore_index=True)
+                                guardar_ventas(ventas)
+
+                                registrar_cambio("Venta", id_venta, st.session_state.usuario)
+                                st.success(f"Venta registrada: {cantidad_vendida} de '{producto['Producto']}' por ${total_venta:,.2f}")
+                                inventario = cargar_inventario()
+                            else:
+                                st.error(f"No hay suficiente stock. Disponible: {producto['Cantidad']}")
+                        else:
+                            st.error(f"El ID '{id_venta}' no se encontró en el inventario. IDs disponibles: {list(inventario['ID'])}")
+                    except IndexError:
+                        st.error("Error al procesar el producto seleccionado. Verifica el formato del menú.")
+            else:
+                st.warning("No hay productos en stock para vender.")
+
+        st.subheader("Ventas Registradas Hoy")
+        hoy = datetime.now().strftime("%Y-%m-%d")
+        ventas_hoy = ventas[ventas["Fecha"].str.startswith(hoy)]
+        if not ventas_hoy.empty:
+            st.dataframe(ventas_hoy)
+            total_dia = ventas_hoy["Total"].sum()
+            st.write(f"**Total de Ventas del Día:** ${total_dia:,.2f}")
+        else:
+            st.info("No hay ventas registradas para hoy.")
+
+    # Opción 3: Cargar CSV
+    elif menu == "Cargar CSV":
+        st.subheader("Cargar Inventario desde CSV")
+        uploaded_file = st.file_uploader("Selecciona un archivo CSV", type=["csv"])
+        if uploaded_file is not None:
+            try:
+                nuevo_inventario = pd.read_csv(uploaded_file)
+                columnas_esperadas = ["ID", "Producto", "Categoría", "Cantidad", "Precio", "Proveedor", "Última Actualización"]
+                if not all(col in nuevo_inventario.columns for col in columnas_esperadas):
+                    st.error("El CSV debe contener las columnas: ID, Producto, Categoría, Cantidad, Precio, Proveedor, Última Actualización")
                 else:
-                    nuevo_producto = pd.DataFrame({
-                        "ID": [id_producto],
-                        "Producto": [nombre],
-                        "Categoría": [categoria],
-                        "Cantidad": [cantidad],
-                        "Precio": [precio],
-                        "Proveedor": [proveedor],
-                        "Última Actualización": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
-                    })
-                    inventario = pd.concat([inventario, nuevo_producto], ignore_index=True)
-                    guardar_inventario(inventario)
-                    registrar_cambio("Agregar", id_producto, st.session_state.usuario)
-                    st.success(f"Producto '{nombre}' agregado con éxito!")
+                    if nuevo_inventario["ID"].duplicated().any():
+                        st.error("El CSV contiene IDs duplicados. Corrige el archivo y vuelve a intentarlo.")
+                    elif nuevo_inventario["Cantidad"].lt(0).any() or nuevo_inventario["Precio"].lt(0).any():
+                        st.error("Cantidad y Precio no pueden ser negativos.")
+                    else:
+                        st.write("Vista previa del CSV:")
+                        st.dataframe(nuevo_inventario)
+                        if st.button("Confirmar Carga"):
+                            inventario = nuevo_inventario.copy()
+                            guardar_inventario(inventario)
+                            registrar_cambio("Cargar CSV", "Todos", st.session_state.usuario)
+                            st.success("Inventario actualizado desde el CSV con éxito!")
+            except Exception as e:
+                st.error(f"Error al procesar el archivo: {str(e)}")
+        st.info("Asegúrate de que el CSV tenga el formato correcto.")
 
-    # Opción 3: Buscar Producto
+    # Opción 4: Agregar Producto (con CSV)
+    elif menu == "Agregar Producto":
+        st.subheader("Agregar Productos desde CSV")
+        uploaded_file = st.file_uploader("Selecciona un archivo CSV con nuevos productos", type=["csv"])
+        if uploaded_file is not None:
+            try:
+                nuevos_productos = pd.read_csv(uploaded_file)
+                columnas_esperadas = ["ID", "Producto", "Categoría", "Cantidad", "Precio", "Proveedor", "Última Actualización"]
+                if not all(col in nuevos_productos.columns for col in columnas_esperadas):
+                    st.error("El CSV debe contener las columnas: ID, Producto, Categoría, Cantidad, Precio, Proveedor, Última Actualización")
+                else:
+                    if nuevos_productos["ID"].duplicated().any():
+                        st.error("El CSV contiene IDs duplicados entre sí. Corrige el archivo y vuelve a intentarlo.")
+                    elif nuevos_productos["ID"].isin(inventario["ID"]).any():
+                        st.error("Algunos IDs en el CSV ya existen en el inventario. Usa IDs únicos.")
+                    elif nuevos_productos["Cantidad"].lt(0).any() or nuevos_productos["Precio"].lt(0).any():
+                        st.error("Cantidad y Precio no pueden ser negativos.")
+                    else:
+                        st.write("Vista previa de los nuevos productos:")
+                        st.dataframe(nuevos_productos)
+                        if st.button("Confirmar Agregado"):
+                            inventario = pd.concat([inventario, nuevos_productos], ignore_index=True)
+                            guardar_inventario(inventario)
+                            for id_prod in nuevos_productos["ID"]:
+                                registrar_cambio("Agregar", id_prod, st.session_state.usuario)
+                            st.success(f"{len(nuevos_productos)} producto(s) agregado(s) con éxito!")
+            except Exception as e:
+                st.error(f"Error al procesar el archivo: {str(e)}")
+        st.info("Asegúrate de que el CSV tenga el formato correcto y IDs únicos.")
+
+    # Opción 5: Buscar Producto
     elif menu == "Buscar Producto":
         st.subheader("Buscar Producto")
         busqueda = st.text_input("Ingrese ID, Nombre o Proveedor")
@@ -203,7 +261,7 @@ else:
             else:
                 st.warning("No se encontraron productos con ese criterio.")
 
-    # Opción 4: Editar Producto
+    # Opción 6: Editar Producto
     elif menu == "Editar Producto":
         st.subheader("Editar Producto")
         id_editar = st.text_input("Ingrese el ID del producto a editar")
@@ -227,7 +285,7 @@ else:
         elif id_editar:
             st.error("ID no encontrado en el inventario.")
 
-    # Opción 5: Eliminar Producto
+    # Opción 7: Eliminar Producto
     elif menu == "Eliminar Producto":
         st.subheader("Eliminar Producto")
         id_eliminar = st.text_input("Ingrese el ID del producto a eliminar")
@@ -243,7 +301,7 @@ else:
         elif id_eliminar:
             st.error("ID no encontrado en el inventario.")
 
-    # Opción 6: Reporte
+    # Opción 8: Reporte
     elif menu == "Reporte":
         st.subheader("Reporte del Inventario")
         if inventario.empty:
@@ -291,7 +349,7 @@ else:
                 mime="application/pdf"
             )
 
-    # Opción 7: Historial
+    # Opción 9: Historial
     elif menu == "Historial":
         st.subheader("Historial de Cambios")
         if os.path.exists(HISTORIAL_FILE):
@@ -299,75 +357,6 @@ else:
             st.dataframe(historial.sort_values("Fecha", ascending=False))
         else:
             st.info("No hay historial de cambios registrado aún.")
-
-    # Opción 8: Registrar Ventas
-    elif menu == "Registrar Ventas":
-        st.subheader("Registrar Ventas del Día")
-        # Asegurar que IDs sean strings
-        inventario["ID"] = inventario["ID"].astype(str)
-        productos_disponibles = [f"{row['Producto']} (ID: {row['ID']}, Stock: {row['Cantidad']})" 
-                                for _, row in inventario.iterrows() if row['Cantidad'] > 0]
-        
-        with st.form(key="ventas_form"):
-            if productos_disponibles:
-                producto_seleccionado = st.selectbox("Selecciona un Producto", productos_disponibles)
-                cantidad_vendida = st.number_input("Cantidad Vendida", min_value=1, step=1)
-                submit_venta = st.form_submit_button(label="Registrar Venta")
-
-                if submit_venta:
-                    try:
-                        # Extraer ID del producto seleccionado
-                        id_venta = producto_seleccionado.split("ID: ")[1].split(",")[0].strip()
-                        st.write(f"ID extraído para depuración: '{id_venta}'")  # Depuración
-
-                        # Verificar que el ID existe en el inventario
-                        if id_venta in inventario["ID"].values:
-                            producto = inventario[inventario["ID"] == id_venta].iloc[0]
-                            if producto["Cantidad"] >= cantidad_vendida:
-                                # Actualizar inventario
-                                inventario.loc[inventario["ID"] == id_venta, "Cantidad"] -= cantidad_vendida
-                                inventario.loc[inventario["ID"] == id_venta, "Última Actualización"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                guardar_inventario(inventario)
-
-                                # Registrar venta
-                                total_venta = cantidad_vendida * producto["Precio"]
-                                nueva_venta = pd.DataFrame({
-                                    "Fecha": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-                                    "ID": [id_venta],
-                                    "Producto": [producto["Producto"]],
-                                    "Cantidad Vendida": [cantidad_vendida],
-                                    "Precio Unitario": [producto["Precio"]],
-                                    "Total": [total_venta],
-                                    "Usuario": [st.session_state.usuario]
-                                })
-                                ventas = pd.concat([ventas, nueva_venta], ignore_index=True)
-                                guardar_ventas(ventas)
-
-                                # Registrar en historial
-                                registrar_cambio("Venta", id_venta, st.session_state.usuario)
-                                st.success(f"Venta registrada: {cantidad_vendida} de '{producto['Producto']}' por ${total_venta:,.2f}")
-
-                                # Recargar inventario para reflejar cambios inmediatamente
-                                inventario = cargar_inventario()
-                            else:
-                                st.error(f"No hay suficiente stock. Disponible: {producto['Cantidad']}")
-                        else:
-                            st.error(f"El ID '{id_venta}' no se encontró en el inventario. IDs disponibles: {list(inventario['ID'])}")
-                    except IndexError:
-                        st.error("Error al procesar el producto seleccionado. Verifica el formato del menú.")
-            else:
-                st.warning("No hay productos en stock para vender.")
-
-        # Mostrar ventas del día
-        st.subheader("Ventas Registradas Hoy")
-        hoy = datetime.now().strftime("%Y-%m-%d")
-        ventas_hoy = ventas[ventas["Fecha"].str.startswith(hoy)]
-        if not ventas_hoy.empty:
-            st.dataframe(ventas_hoy)
-            total_dia = ventas_hoy["Total"].sum()
-            st.write(f"**Total de Ventas del Día:** ${total_dia:,.2f}")
-        else:
-            st.info("No hay ventas registradas para hoy.")
 
     # Nota al final
     st.markdown("---")

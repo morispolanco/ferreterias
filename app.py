@@ -304,14 +304,21 @@ else:
     # Opción 8: Registrar Ventas
     elif menu == "Registrar Ventas":
         st.subheader("Registrar Ventas del Día")
+        # Crear lista de productos para el selectbox
+        productos_disponibles = [f"{row['Producto']} (ID: {row['ID']}, Stock: {row['Cantidad']})" 
+                                for _, row in inventario.iterrows() if row['Cantidad'] > 0]
+        
         with st.form(key="ventas_form"):
-            id_venta = st.text_input("ID del Producto a Vender")
-            cantidad_vendida = st.number_input("Cantidad Vendida", min_value=1, step=1)
-            submit_venta = st.form_submit_button(label="Registrar Venta")
+            if productos_disponibles:
+                producto_seleccionado = st.selectbox("Selecciona un Producto", productos_disponibles)
+                cantidad_vendida = st.number_input("Cantidad Vendida", min_value=1, step=1)
+                submit_venta = st.form_submit_button(label="Registrar Venta")
 
-            if submit_venta:
-                if id_venta in inventario["ID"].values:
+                if submit_venta:
+                    # Extraer ID del producto seleccionado
+                    id_venta = producto_seleccionado.split("ID: ")[1].split(",")[0]
                     producto = inventario[inventario["ID"] == id_venta].iloc[0]
+                    
                     if producto["Cantidad"] >= cantidad_vendida:
                         # Actualizar inventario
                         inventario.loc[inventario["ID"] == id_venta, "Cantidad"] -= cantidad_vendida
@@ -337,8 +344,8 @@ else:
                         st.success(f"Venta registrada: {cantidad_vendida} de '{producto['Producto']}' por ${total_venta:,.2f}")
                     else:
                         st.error(f"No hay suficiente stock. Disponible: {producto['Cantidad']}")
-                else:
-                    st.error("ID no encontrado en el inventario.")
+            else:
+                st.warning("No hay productos en stock para vender.")
 
         # Mostrar ventas del día
         st.subheader("Ventas Registradas Hoy")

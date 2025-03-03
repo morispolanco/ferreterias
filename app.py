@@ -1,220 +1,249 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
-from datetime import datetime
-from fpdf import FPDF
-import hashlib
 import os
-
-# Conexión a la base de datos SQLite
-conn = sqlite3.connect('ferreteria.db', check_same_thread=False)
-c = conn.cursor()
-
-# Crear tablas con campo usuario
-c.execute('''CREATE TABLE IF NOT EXISTS inventario 
-             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-              producto TEXT, 
-              cantidad INTEGER, 
-              precio REAL, 
-              usuario TEXT, 
-              UNIQUE(producto, usuario))''')
-c.execute('''CREATE TABLE IF NOT EXISTS cotizaciones 
-             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-              cliente TEXT, 
-              total REAL, 
-              fecha TEXT, 
-              usuario TEXT)''')
-c.execute('''CREATE TABLE IF NOT EXISTS usuarios 
-             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-              usuario TEXT UNIQUE, 
-              contraseña TEXT)''')
-conn.commit()
-
-# Insertar usuarios predefinidos
-def inicializar_usuarios():
-    usuarios_predefinidos = [("admin", "admin123"), ("user", "user456")]
-    for usuario, contraseña in usuarios_predefinidos:
-        hashed_pwd = hashlib.sha256(contraseña.encode()).hexdigest()
-        c.execute("INSERT OR IGNORE INTO usuarios (usuario, contraseña) VALUES (?, ?)", (usuario, hashed_pwd))
-    conn.commit()
-
-inicializar_usuarios()
+from datetime import datetime
+import plotly.express as px
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+from reportlab.lib import colors
+from io import BytesIO
 
 # Configuración inicial
-st.title("Gestor de Ferretería")
+st.set_page_config(page_title="Inventario Ferretería", layout="wide")
+st.title("Sistema de Inventario - Ferretería")
 
-# Funciones auxiliares
+# Archivos
+CSV_FILE = "inventario_ferreteria.csv"
+HISTORIAL_FILE = "historial_cambios.csv"
+USERS = {"admin": "ferreteria123"}  # Usuario y contraseña simples
+
+# Función para cargar inventario
 @st.cache_data
-def cargar_inventario(_conn, usuario):
-    return pd.read_sql_query("SELECT producto, cantidad, precio FROM inventario WHERE usuario = ?", _conn, params=(usuario,))
+def cargar_inventario():
+    if os.path.exists(CSV_FILE):
+        return pd.read_csv(CSV_FILE)
+    return pd.DataFrame(columns=["ID", "Producto", "Categoría", "Cantidad", "Precio", "Proveedor", "Última Actualización"])
 
-def guardar_inventario(producto, cantidad, precio, usuario):
-    c.execute("INSERT OR REPLACE INTO inventario (producto, cantidad, precio, usuario) VALUES (?, ?, ?, ?)", 
-              (producto, cantidad, precio, usuario))
-    conn.commit()
-    st.cache_data.clear()
+# Función para guardar inventario
+def guardar_inventario(df):
+    df.to_csv(CSV_FILE, index=False)
 
-def actualizar_inventario(producto, cantidad, usuario):
-    c.execute("UPDATE inventario SET cantidad = cantidad - ? WHERE producto = ? AND usuario = ?", 
-              (cantidad, producto, usuario))
-    conn.commit()
-    st.cache_data.clear()
+# Registrar cambios en historial
+def registrar_cambio(accion, id_producto, usuario):
+    historial = pd.DataFrame({
+        "Fecha": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+        "Acción": [accion],
+        "ID Producto": [id_producto],
+        "Usuario": [usuario]
+    })
+    if os.path.exists(HISTORIAL_FILE):
+        historial_existente = pd.read_csv(HISTORIAL_FILE)
+        historial = pd.concat([historial_existente, historial], ignore_index=True)
+    historial.to_csv(HISTORIAL_FILE, index=False)
 
-def guardar_cotizacion(cliente, total, usuario):
-    fecha = datetime.now().strftime('%Y-%m-%d')
-    c.execute("INSERT INTO cotizaciones (cliente, total, fecha, usuario) VALUES (?, ?, ?, ?)", 
-              (cliente, total, fecha, usuario))
-    conn.commit()
+# Autenticación
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
 
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-def verificar_usuario(usuario, contraseña):
-    hashed_pwd = hash_password(contraseña)
-    c.execute("SELECT * FROM usuarios WHERE usuario = ? AND contraseña = ?", (usuario, hashed_pwd))
-    return c.fetchone() is not None
-
-# Estado de autenticación
-if "user" not in st.session_state:
-    st.session_state["user"] = None
-
-# Lógica de autenticación
-if not st.session_state["user"]:
+if not st.session_state.authenticated:
     st.subheader("Iniciar Sesión")
     usuario = st.text_input("Usuario")
     contraseña = st.text_input("Contraseña", type="password")
-    
     if st.button("Iniciar Sesión"):
-        if verificar_usuario(usuario, contraseña):
-            st.session_state["user"] = usuario
-            st.success(f"Bienvenido, {usuario}!")
-            st.rerun()
+        if usuario in USERS and USERS[usuario] == contraseña:
+            st.session_state.authenticated = True
+            st.session_state.usuario = usuario
+            st.success("Sesión iniciada con éxito!")
         else:
             st.error("Usuario o contraseña incorrectos.")
 else:
-    usuario_actual = st.session_state["user"]
-    st.sidebar.write(f"Bienvenido, {usuario_actual}")
+    # Cargar inventario
+    inventario = cargar_inventario()
+
+    # Barra lateral
+    menu = st.sidebar.selectbox(
+        "Menú",
+        ["Ver Inventario", "Agregar Producto", "Buscar Producto", "Editar Producto", "Eliminar Producto", "Reporte", "Historial"]
+    )
+    st.sidebar.write(f"Usuario: {st.session_state.usuario}")
     if st.sidebar.button("Cerrar Sesión"):
-        del st.session_state["user"]
-        st.success("Sesión cerrada con éxito.")
-        st.rerun()
+        st.session_state.authenticated = False
+        st.session_state.pop("usuario")
 
-    # Menú principal
-    menu = st.sidebar.selectbox("Menú", ["Inventario", "Catálogo", "Cotizaciones", "Reportes"])
-
-    # Sección 1: Gestión de Inventario
-    if menu == "Inventario":
-        st.header("Control de Inventario")
-        
-        with st.form(key='agregar_producto'):
-            producto = st.text_input("Nombre del Producto")
-            cantidad = st.number_input("Cantidad", min_value=0)
-            precio = st.number_input("Precio Unitario", min_value=0.0, format="%.2f")
-            submit = st.form_submit_button(label="Agregar Producto")
-            
-            if submit:
-                guardar_inventario(producto, cantidad, precio, usuario_actual)
-                st.success(f"Producto '{producto}' agregado o actualizado con éxito.")
-        
+    # Opción 1: Ver Inventario
+    if menu == "Ver Inventario":
         st.subheader("Inventario Actual")
-        inventario_df = cargar_inventario(conn, usuario_actual)
-        st.dataframe(inventario_df)
-        
-        stock_bajo = inventario_df[inventario_df["cantidad"] < 5]
-        if not stock_bajo.empty:
-            st.warning("¡Alerta! Productos con stock bajo:")
-            st.write(stock_bajo)
-
-    # Sección 2: Catálogo
-    elif menu == "Catálogo":
-        st.header("Catálogo de Productos")
-        inventario_df = cargar_inventario(conn, usuario_actual)
-        if not inventario_df.empty:
-            st.write("Lista de productos disponibles:")
-            for index, row in inventario_df.iterrows():
-                st.write(f"**{row['producto']}** - Cantidad: {row['cantidad']} - Precio: ${row['precio']:.2f}")
+        if inventario.empty:
+            st.warning("El inventario está vacío.")
         else:
-            st.info("No hay productos en el inventario aún.")
+            # Filtros
+            col1, col2 = st.columns(2)
+            with col1:
+                categoria_filtro = st.selectbox("Filtrar por Categoría", ["Todas"] + inventario["Categoría"].unique().tolist())
+            with col2:
+                proveedor_filtro = st.selectbox("Filtrar por Proveedor", ["Todos"] + inventario["Proveedor"].unique().tolist())
+            
+            inventario_filtrado = inventario
+            if categoria_filtro != "Todas":
+                inventario_filtrado = inventario_filtrado[inventario_filtrado["Categoría"] == categoria_filtro]
+            if proveedor_filtro != "Todos":
+                inventario_filtrado = inventario_filtrado[inventario_filtrado["Proveedor"] == proveedor_filtro]
+            
+            # Resaltar bajo stock o agotados
+            def color_stock(row):
+                if row["Cantidad"] == 0:
+                    return ['background-color: red'] * len(row)
+                elif row["Cantidad"] < 5:
+                    return ['background-color: yellow'] * len(row)
+                return [''] * len(row)
+            
+            st.dataframe(inventario_filtrado.style.apply(color_stock, axis=1))
+            st.download_button(
+                label="Descargar Inventario como CSV",
+                data=inventario_filtrado.to_csv(index=False),
+                file_name=f"inventario_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
 
-    # Sección 3: Cotizaciones
-    elif menu == "Cotizaciones":
-        st.header("Generar Cotización")
-        
-        cliente = st.text_input("Nombre del Cliente")
-        inventario_df = cargar_inventario(conn, usuario_actual)
-        productos_cotizar = st.multiselect("Seleccionar Productos", inventario_df["producto"].tolist())
-        cantidades = {}
-        
-        for prod in productos_cotizar:
-            stock_disponible = inventario_df[inventario_df["producto"] == prod]["cantidad"].values[0]
-            cantidades[prod] = st.number_input(f"Cantidad de {prod} (Stock: {stock_disponible})", 
-                                               min_value=1, max_value=stock_disponible, key=prod)
-        
-        if st.button("Generar Cotización"):
-            if cliente and productos_cotizar:
-                error = False
-                for prod in productos_cotizar:
-                    stock_disponible = inventario_df[inventario_df["producto"] == prod]["cantidad"].values[0]
-                    if cantidades[prod] > stock_disponible:
-                        st.error(f"No hay suficiente stock de {prod}. Disponible: {stock_disponible}")
-                        error = True
-                        break
-                
-                if not error:
-                    total = 0
-                    cotizacion_detalle = []
-                    for prod in productos_cotizar:
-                        precio = inventario_df[inventario_df["producto"] == prod]["precio"].values[0]
-                        subtotal = precio * cantidades[prod]
-                        total += subtotal
-                        cotizacion_detalle.append([prod, cantidades[prod], precio, subtotal])
-                    
-                    pdf = FPDF()
-                    pdf.add_page()
-                    pdf.set_font("Arial", size=12)
-                    pdf.cell(200, 10, txt="Cotización - Ferretería", ln=True, align="C")
-                    pdf.cell(200, 10, txt=f"Cliente: {cliente}", ln=True)
-                    pdf.cell(200, 10, txt=f"Fecha: {datetime.now().strftime('%Y-%m-%d')}", ln=True)
-                    pdf.ln(10)
-                    pdf.cell(50, 10, "Producto", 1)
-                    pdf.cell(30, 10, "Cantidad", 1)
-                    pdf.cell(30, 10, "Precio", 1)
-                    pdf.cell(30, 10, "Subtotal", 1)
-                    pdf.ln()
-                    for item in cotizacion_detalle:
-                        pdf.cell(50, 10, item[0], 1)
-                        pdf.cell(30, 10, str(item[1]), 1)
-                        pdf.cell(30, 10, f"${item[2]:.2f}", 1)
-                        pdf.cell(30, 10, f"${item[3]:.2f}", 1)
-                        pdf.ln()
-                    pdf.cell(110, 10, "Total", 1)
-                    pdf.cell(30, 10, f"${total:.2f}", 1)
-                    
-                    pdf_file = f"cotizacion_{cliente}_{datetime.now().strftime('%Y%m%d')}.pdf"
-                    pdf.output(pdf_file)
-                    
-                    for prod in productos_cotizar:
-                        actualizar_inventario(prod, cantidades[prod], usuario_actual)
-                    guardar_cotizacion(cliente, total, usuario_actual)
-                    
-                    st.success("Cotización generada y stock actualizado.")
-                    with open(pdf_file, "rb") as file:
-                        st.download_button("Descargar Cotización", file, file_name=pdf_file)
+    # Opción 2: Agregar Producto
+    elif menu == "Agregar Producto":
+        st.subheader("Agregar Nuevo Producto")
+        with st.form(key="agregar_form"):
+            id_producto = st.text_input("ID del Producto (único)")
+            nombre = st.text_input("Nombre del Producto")
+            categoria = st.selectbox("Categoría", ["Herramientas", "Materiales", "Pinturas", "Electricidad", "Otros"])
+            cantidad = st.number_input("Cantidad", min_value=0, step=1)
+            precio = st.number_input("Precio Unitario", min_value=0.0, step=0.01)
+            proveedor = st.text_input("Proveedor")
+            submit_button = st.form_submit_button(label="Agregar")
+
+            if submit_button:
+                if not id_producto or not nombre:
+                    st.error("El ID y el Nombre son obligatorios.")
+                elif id_producto in inventario["ID"].values:
+                    st.error("El ID ya existe. Use uno diferente.")
+                else:
+                    nuevo_producto = pd.DataFrame({
+                        "ID": [id_producto],
+                        "Producto": [nombre],
+                        "Categoría": [categoria],
+                        "Cantidad": [cantidad],
+                        "Precio": [precio],
+                        "Proveedor": [proveedor],
+                        "Última Actualización": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+                    })
+                    inventario = pd.concat([inventario, nuevo_producto], ignore_index=True)
+                    guardar_inventario(inventario)
+                    registrar_cambio("Agregar", id_producto, st.session_state.usuario)
+                    st.success(f"Producto '{nombre}' agregado con éxito!")
+
+    # Opción 3: Buscar Producto
+    elif menu == "Buscar Producto":
+        st.subheader("Buscar Producto")
+        busqueda = st.text_input("Ingrese ID, Nombre o Proveedor")
+        if busqueda:
+            resultado = inventario[
+                inventario["ID"].str.contains(busqueda, case=False, na=False) |
+                inventario["Producto"].str.contains(busqueda, case=False, na=False) |
+                inventario["Proveedor"].str.contains(busqueda, case=False, na=False)
+            ]
+            if not resultado.empty:
+                st.dataframe(resultado)
             else:
-                st.error("Por favor, completa todos los campos.")
+                st.warning("No se encontraron productos con ese criterio.")
 
-    # Sección 4: Reportes
-    elif menu == "Reportes":
-        st.header("Reportes")
-        cotizaciones_df = pd.read_sql_query("SELECT cliente, total, fecha FROM cotizaciones WHERE usuario = ?", 
-                                            conn, params=(usuario_actual,))
-        if cotizaciones_df.empty:
-            st.info("No hay cotizaciones registradas aún.")
+    # Opción 4: Editar Producto
+    elif menu == "Editar Producto":
+        st.subheader("Editar Producto")
+        id_editar = st.text_input("Ingrese el ID del producto a editar")
+        if id_editar and id_editar in inventario["ID"].values:
+            producto = inventario[inventario["ID"] == id_editar].iloc[0]
+            with st.form(key="editar_form"):
+                nombre = st.text_input("Nombre del Producto", value=producto["Producto"])
+                categoria = st.selectbox("Categoría", ["Herramientas", "Materiales", "Pinturas", "Electricidad", "Otros"], 
+                                       index=["Herramientas", "Materiales", "Pinturas", "Electricidad", "Otros"].index(producto["Categoría"]))
+                cantidad = st.number_input("Cantidad", min_value=0, step=1, value=int(producto["Cantidad"]))
+                precio = st.number_input("Precio Unitario", min_value=0.0, step=0.01, value=float(producto["Precio"]))
+                proveedor = st.text_input("Proveedor", value=producto["Proveedor"])
+                submit_edit = st.form_submit_button(label="Guardar Cambios")
+
+                if submit_edit:
+                    inventario.loc[inventario["ID"] == id_editar, ["Producto", "Categoría", "Cantidad", "Precio", "Proveedor", "Última Actualización"]] = \
+                        [nombre, categoria, cantidad, precio, proveedor, datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+                    guardar_inventario(inventario)
+                    registrar_cambio("Editar", id_editar, st.session_state.usuario)
+                    st.success(f"Producto con ID '{id_editar}' actualizado con éxito!")
+        elif id_editar:
+            st.error("ID no encontrado en el inventario.")
+
+    # Opción 5: Eliminar Producto
+    elif menu == "Eliminar Producto":
+        st.subheader("Eliminar Producto")
+        id_eliminar = st.text_input("Ingrese el ID del producto a eliminar")
+        if id_eliminar and id_eliminar in inventario["ID"].values:
+            producto = inventario[inventario["ID"] == id_eliminar].iloc[0]
+            st.write(f"Producto a eliminar: {producto['Producto']} (Cantidad: {producto['Cantidad']})")
+            confirmar = st.button("Confirmar Eliminación")
+            if confirmar:
+                inventario = inventario[inventario["ID"] != id_eliminar]
+                guardar_inventario(inventario)
+                registrar_cambio("Eliminar", id_eliminar, st.session_state.usuario)
+                st.success(f"Producto con ID '{id_eliminar}' eliminado con éxito!")
+        elif id_eliminar:
+            st.error("ID no encontrado en el inventario.")
+
+    # Opción 6: Reporte
+    elif menu == "Reporte":
+        st.subheader("Reporte del Inventario")
+        if inventario.empty:
+            st.warning("No hay datos para generar un reporte.")
         else:
-            st.subheader("Ventas Registradas")
-            st.dataframe(cotizaciones_df)
-            st.subheader("Ganancias Totales")
-            st.write(f"${cotizaciones_df['total'].sum():.2f}")
+            total_valor = (inventario["Cantidad"] * inventario["Precio"]).sum()
+            bajo_stock = inventario[inventario["Cantidad"] < 5]
+            st.write(f"**Valor Total del Inventario:** ${total_valor:,.2f}")
+            st.write(f"**Productos con Bajo Stock (menos de 5 unidades):** {len(bajo_stock)}")
+            if not bajo_stock.empty:
+                st.dataframe(bajo_stock)
+            
+            # Gráfico de categorías
+            fig = px.bar(inventario.groupby("Categoría")["Cantidad"].sum().reset_index(), 
+                        x="Categoría", y="Cantidad", title="Cantidad por Categoría")
+            st.plotly_chart(fig)
 
-# Instrucciones
-st.sidebar.info("Instala: `pip install streamlit==1.42.0 pandas fpdf` y ejecuta con `streamlit run nombre_del_archivo.py`. Usuarios: admin/admin123, user/user456")
+            # Generar PDF
+            buffer = BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=letter)
+            elements = []
+            elements.append(Paragraph("Reporte de Inventario", style=TableStyle([('FONTSIZE', (0, 0), (-1, -1), 14)])))
+            data = [inventario.columnstolist()] + inventario.values.tolist()
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            elements.append(table)
+            doc.build(elements)
+            st.download_button(
+                label="Descargar Reporte como PDF",
+                data=buffer.getvalue(),
+                file_name=f"reporte_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf"
+            )
+
+    # Opción 7: Historial
+    elif menu == "Historial":
+        st.subheader("Historial de Cambios")
+        if os.path.exists(HISTORIAL_FILE):
+            historial = pd.read_csv(HISTORIAL_FILE)
+            st.dataframe(historial.sort_values("Fecha", ascending=False))
+        else:
+            st.info("No hay historial de cambios registrado aún.")
+
+    # Nota al final
+    st.markdown("---")
+    st.write(f"Última actualización: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

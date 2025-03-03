@@ -16,6 +16,7 @@ st.title("Sistema de Inventario - Ferretería")
 # Archivos
 CSV_FILE = "inventario_ferreteria.csv"
 HISTORIAL_FILE = "historial_cambios.csv"
+VENTAS_FILE = "ventas.csv"
 USERS = {"admin": "ferreteria123"}  # Usuario y contraseña simples
 
 # Datos de demostración
@@ -41,6 +42,16 @@ def cargar_inventario():
 # Función para guardar inventario
 def guardar_inventario(df):
     df.to_csv(CSV_FILE, index=False)
+
+# Función para cargar ventas
+def cargar_ventas():
+    if os.path.exists(VENTAS_FILE):
+        return pd.read_csv(VENTAS_FILE)
+    return pd.DataFrame(columns=["Fecha", "ID", "Producto", "Cantidad Vendida", "Precio Unitario", "Total", "Usuario"])
+
+# Función para guardar ventas
+def guardar_ventas(df):
+    df.to_csv(VENTAS_FILE, index=False)
 
 # Registrar cambios en historial
 def registrar_cambio(accion, id_producto, usuario):
@@ -71,13 +82,15 @@ if not st.session_state.authenticated:
         else:
             st.error("Usuario o contraseña incorrectos.")
 else:
-    # Cargar inventario
+    # Cargar inventario y ventas
     inventario = cargar_inventario()
+    ventas = cargar_ventas()
 
     # Barra lateral
     menu = st.sidebar.selectbox(
         "Menú",
-        ["Ver Inventario", "Agregar Producto", "Buscar Producto", "Editar Producto", "Eliminar Producto", "Reporte", "Historial", "Cargar CSV"]
+        ["Ver Inventario", "Agregar Producto", "Buscar Producto", "Editar Producto", "Eliminar Producto", 
+         "Reporte", "Historial", "Cargar CSV", "Registrar Ventas"]
     )
     st.sidebar.write(f"Usuario: {st.session_state.usuario}")
     if st.sidebar.button("Cerrar Sesión"):
@@ -248,22 +261,17 @@ else:
                         x="Categoría", y="Cantidad", title="Cantidad por Categoría")
             st.plotly_chart(fig)
 
-            # Generar PDF
             buffer = BytesIO()
             doc = SimpleDocTemplate(buffer, pagesize=letter)
             elements = []
-
-            # Usar ParagraphStyle para el título
             title_style = ParagraphStyle(
                 name='Title',
                 fontSize=14,
                 leading=16,
-                alignment=1,  # Centrado
+                alignment=1,
                 spaceAfter=12
             )
             elements.append(Paragraph("Reporte de Inventario", title_style))
-
-            # Crear la tabla con los datos
             data = [inventario.columns.tolist()] + inventario.values.tolist()
             table = Table(data)
             table.setStyle(TableStyle([
@@ -276,8 +284,6 @@ else:
                 ('GRID', (0, 0), (-1, -1), 1, colors.black)
             ]))
             elements.append(table)
-
-            # Construir el documento
             doc.build(elements)
             st.download_button(
                 label="Descargar Reporte como PDF",
@@ -294,6 +300,56 @@ else:
             st.dataframe(historial.sort_values("Fecha", ascending=False))
         else:
             st.info("No hay historial de cambios registrado aún.")
+
+    # Opción 8: Registrar Ventas
+    elif menu == "Registrar Ventas":
+        st.subheader("Registrar Ventas del Día")
+        with st.form(key="ventas_form"):
+            id_venta = st.text_input("ID del Producto a Vender")
+            cantidad_vendida = st.number_input("Cantidad Vendida", min_value=1, step=1)
+            submit_venta = st.form_submit_button(label="Registrar Venta")
+
+            if submit_venta:
+                if id_venta in inventario["ID"].values:
+                    producto = inventario[inventario["ID"] == id_venta].iloc[0]
+                    if producto["Cantidad"] >= cantidad_vendida:
+                        # Actualizar inventario
+                        inventario.loc[inventario["ID"] == id_venta, "Cantidad"] -= cantidad_vendida
+                        inventario.loc[inventario["ID"] == id_venta, "Última Actualización"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        guardar_inventario(inventario)
+
+                        # Registrar venta
+                        total_venta = cantidad_vendida * producto["Precio"]
+                        nueva_venta = pd.DataFrame({
+                            "Fecha": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                            "ID": [id_venta],
+                            "Producto": [producto["Producto"]],
+                            "Cantidad Vendida": [cantidad_vendida],
+                            "Precio Unitario": [producto["Precio"]],
+                            "Total": [total_venta],
+                            "Usuario": [st.session_state.usuario]
+                        })
+                        ventas = pd.concat([ventas, nueva_venta], ignore_index=True)
+                        guardar_ventas(ventas)
+
+                        # Registrar en historial
+                        registrar_cambio("Venta", id_venta, st.session_state.usuario)
+                        st.success(f"Venta registrada: {cantidad_vendida} de '{producto['Producto']}' por ${total_venta:,.2f}")
+                    else:
+                        st.error(f"No hay suficiente stock. Disponible: {producto['Cantidad']}")
+                else:
+                    st.error("ID no encontrado en el inventario.")
+
+        # Mostrar ventas del día
+        st.subheader("Ventas Registradas Hoy")
+        hoy = datetime.now().strftime("%Y-%m-%d")
+        ventas_hoy = ventas[ventas["Fecha"].str.startswith(hoy)]
+        if not ventas_hoy.empty:
+            st.dataframe(ventas_hoy)
+            total_dia = ventas_hoy["Total"].sum()
+            st.write(f"**Total de Ventas del Día:** ${total_dia:,.2f}")
+        else:
+            st.info("No hay ventas registradas para hoy.")
 
     # Nota al final
     st.markdown("---")

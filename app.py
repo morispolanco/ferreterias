@@ -21,7 +21,7 @@ USERS = {"admin": "ferreteria123"}  # Usuario y contraseña simples
 
 # Datos de demostración
 DEMO_DATA = pd.DataFrame({
-    "ID": ["001", "002", "003", "004", "005"],  # IDs como strings con ceros
+    "ID": ["001", "002", "003", "004", "005"],
     "Producto": ["Taladro Eléctrico", "Pintura Blanca", "Tornillos 1/4", "Martillo", "Cable 10m"],
     "Categoría": ["Herramientas", "Pinturas", "Materiales", "Herramientas", "Electricidad"],
     "Cantidad": [10, 5, 100, 8, 15],
@@ -31,8 +31,7 @@ DEMO_DATA = pd.DataFrame({
                             "2025-03-01 12:00:00", "2025-03-02 14:20:00"]
 })
 
-# Función para cargar inventario
-@st.cache_data
+# Función para cargar inventario (sin caché para siempre reflejar el archivo actualizado)
 def cargar_inventario():
     if not os.path.exists(CSV_FILE):
         DEMO_DATA.to_csv(CSV_FILE, index=False)
@@ -82,7 +81,7 @@ if not st.session_state.authenticated:
         else:
             st.error("Usuario o contraseña incorrectos.")
 else:
-    # Cargar inventario y ventas
+    # Cargar inventario y ventas (recargamos cada vez para reflejar cambios)
     inventario = cargar_inventario()
     ventas = cargar_ventas()
 
@@ -304,8 +303,8 @@ else:
     # Opción 8: Registrar Ventas
     elif menu == "Registrar Ventas":
         st.subheader("Registrar Ventas del Día")
-        # Asegurar que IDs sean strings y usar los IDs reales del inventario
-        inventario["ID"] = inventario["ID"].astype(str)  # Convertir IDs a strings
+        # Asegurar que IDs sean strings
+        inventario["ID"] = inventario["ID"].astype(str)
         productos_disponibles = [f"{row['Producto']} (ID: {row['ID']}, Stock: {row['Cantidad']})" 
                                 for _, row in inventario.iterrows() if row['Cantidad'] > 0]
         
@@ -347,6 +346,9 @@ else:
                                 # Registrar en historial
                                 registrar_cambio("Venta", id_venta, st.session_state.usuario)
                                 st.success(f"Venta registrada: {cantidad_vendida} de '{producto['Producto']}' por ${total_venta:,.2f}")
+
+                                # Recargar inventario para reflejar cambios inmediatamente
+                                inventario = cargar_inventario()
                             else:
                                 st.error(f"No hay suficiente stock. Disponible: {producto['Cantidad']}")
                         else:

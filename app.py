@@ -96,7 +96,7 @@ else:
     # Barra lateral con menú
     menu = st.sidebar.selectbox(
         "Menú",
-        ["Ver Inventario", "Registrar Ventas", "Cargar CSV", "Agregar Producto", "Buscar Producto", 
+        ["Ver Inventario", "Registrar Ventas", "Cargar CSV", "Reabastecer Stock", "Buscar Producto", 
          "Editar Producto", "Eliminar Producto", "Reporte", "Historial"]
     )
     st.sidebar.write(f"Usuario: {st.session_state.usuario}")
@@ -228,9 +228,9 @@ else:
                 st.error(f"Error al procesar el archivo: {str(e)}")
         st.info("Asegúrate de que el CSV tenga el formato correcto.")
 
-    # Opción 4: Agregar Producto (con CSV)
-    elif menu == "Agregar Producto":
-        st.subheader("Agregar Productos desde CSV")
+    # Opción 4: Reabastecer Stock (con CSV)
+    elif menu == "Reabastecer Stock":
+        st.subheader("Reabastecer Stock desde CSV")
         uploaded_file = st.file_uploader("Selecciona un archivo CSV con nuevos productos", type=["csv"])
         if uploaded_file is not None:
             try:

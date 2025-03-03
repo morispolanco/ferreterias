@@ -315,35 +315,41 @@ else:
                 submit_venta = st.form_submit_button(label="Registrar Venta")
 
                 if submit_venta:
-                    # Extraer ID del producto seleccionado
-                    id_venta = producto_seleccionado.split("ID: ")[1].split(",")[0]
-                    producto = inventario[inventario["ID"] == id_venta].iloc[0]
-                    
-                    if producto["Cantidad"] >= cantidad_vendida:
-                        # Actualizar inventario
-                        inventario.loc[inventario["ID"] == id_venta, "Cantidad"] -= cantidad_vendida
-                        inventario.loc[inventario["ID"] == id_venta, "Última Actualización"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        guardar_inventario(inventario)
+                    try:
+                        # Extraer ID del producto seleccionado de manera robusta
+                        id_venta = producto_seleccionado.split("ID: ")[1].split(",")[0].strip()
+                        # Verificar que el ID existe en el inventario
+                        if id_venta in inventario["ID"].values:
+                            producto = inventario[inventario["ID"] == id_venta].iloc[0]
+                            if producto["Cantidad"] >= cantidad_vendida:
+                                # Actualizar inventario
+                                inventario.loc[inventario["ID"] == id_venta, "Cantidad"] -= cantidad_vendida
+                                inventario.loc[inventario["ID"] == id_venta, "Última Actualización"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                guardar_inventario(inventario)
 
-                        # Registrar venta
-                        total_venta = cantidad_vendida * producto["Precio"]
-                        nueva_venta = pd.DataFrame({
-                            "Fecha": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-                            "ID": [id_venta],
-                            "Producto": [producto["Producto"]],
-                            "Cantidad Vendida": [cantidad_vendida],
-                            "Precio Unitario": [producto["Precio"]],
-                            "Total": [total_venta],
-                            "Usuario": [st.session_state.usuario]
-                        })
-                        ventas = pd.concat([ventas, nueva_venta], ignore_index=True)
-                        guardar_ventas(ventas)
+                                # Registrar venta
+                                total_venta = cantidad_vendida * producto["Precio"]
+                                nueva_venta = pd.DataFrame({
+                                    "Fecha": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                                    "ID": [id_venta],
+                                    "Producto": [producto["Producto"]],
+                                    "Cantidad Vendida": [cantidad_vendida],
+                                    "Precio Unitario": [producto["Precio"]],
+                                    "Total": [total_venta],
+                                    "Usuario": [st.session_state.usuario]
+                                })
+                                ventas = pd.concat([ventas, nueva_venta], ignore_index=True)
+                                guardar_ventas(ventas)
 
-                        # Registrar en historial
-                        registrar_cambio("Venta", id_venta, st.session_state.usuario)
-                        st.success(f"Venta registrada: {cantidad_vendida} de '{producto['Producto']}' por ${total_venta:,.2f}")
-                    else:
-                        st.error(f"No hay suficiente stock. Disponible: {producto['Cantidad']}")
+                                # Registrar en historial
+                                registrar_cambio("Venta", id_venta, st.session_state.usuario)
+                                st.success(f"Venta registrada: {cantidad_vendida} de '{producto['Producto']}' por ${total_venta:,.2f}")
+                            else:
+                                st.error(f"No hay suficiente stock. Disponible: {producto['Cantidad']}")
+                        else:
+                            st.error(f"El ID '{id_venta}' no se encontró en el inventario.")
+                    except IndexError:
+                        st.error("Error al procesar el producto seleccionado. Verifica el formato del menú.")
             else:
                 st.warning("No hay productos en stock para vender.")
 

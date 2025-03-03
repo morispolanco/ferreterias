@@ -6,6 +6,7 @@ import plotly.express as px
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib import colors
+from reportlab.lib.styles import ParagraphStyle
 from io import BytesIO
 
 # Configuración inicial
@@ -33,7 +34,6 @@ DEMO_DATA = pd.DataFrame({
 @st.cache_data
 def cargar_inventario():
     if not os.path.exists(CSV_FILE):
-        # Si no existe el archivo, usar datos de demostración
         DEMO_DATA.to_csv(CSV_FILE, index=False)
         return DEMO_DATA.copy()
     return pd.read_csv(CSV_FILE)
@@ -248,10 +248,22 @@ else:
                         x="Categoría", y="Cantidad", title="Cantidad por Categoría")
             st.plotly_chart(fig)
 
+            # Generar PDF
             buffer = BytesIO()
             doc = SimpleDocTemplate(buffer, pagesize=letter)
             elements = []
-            elements.append(Paragraph("Reporte de Inventario", style=TableStyle([('FONTSIZE', (0, 0), (-1, -1), 14)])))
+
+            # Usar ParagraphStyle para el título
+            title_style = ParagraphStyle(
+                name='Title',
+                fontSize=14,
+                leading=16,
+                alignment=1,  # Centrado
+                spaceAfter=12
+            )
+            elements.append(Paragraph("Reporte de Inventario", title_style))
+
+            # Crear la tabla con los datos
             data = [inventario.columns.tolist()] + inventario.values.tolist()
             table = Table(data)
             table.setStyle(TableStyle([
@@ -264,6 +276,8 @@ else:
                 ('GRID', (0, 0), (-1, -1), 1, colors.black)
             ]))
             elements.append(table)
+
+            # Construir el documento
             doc.build(elements)
             st.download_button(
                 label="Descargar Reporte como PDF",

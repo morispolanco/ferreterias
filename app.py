@@ -8,6 +8,8 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib import colors
 from reportlab.lib.styles import ParagraphStyle
 from io import BytesIO
+from statsmodels.tsa.arima.model import ARIMA
+import warnings
 
 # Configuración inicial
 st.set_page_config(page_title="Inventario Ferretería", layout="wide")
@@ -28,7 +30,8 @@ DEMO_DATA = pd.DataFrame({
     "Precio": [150.50, 25.75, 0.10, 12.00, 8.90],  # Precios ya con dos decimales
     "Proveedor": ["Bosch", "Sherwin", "Genérico", "Truper", "Voltex"],
     "Última Actualización": ["2025-03-02 10:00:00", "2025-03-01 15:30:00", "2025-02-28 09:15:00", 
-                            "2025-03-01 12:00:00", "2025-03-02 14:20:00"]
+                            "2025-03-01 12:00:00", "2025-03-02 14:20:00"],
+    "Demanda Estimada": [0.0, 0.0, 0.0, 0.0, 0.0]  # Nueva columna inicializada
 })
 
 # Función para cargar inventario (redondear precios a dos decimales)
@@ -38,18 +41,21 @@ def cargar_inventario():
         return DEMO_DATA.copy()
     df = pd.read_csv(CSV_FILE)
     df["Precio"] = df["Precio"].round(2)  # Redondear precios a dos decimales al cargar
+    if "Demanda Estimada" not in df.columns:
+        df["Demanda Estimada"] = 0.0  # Añadir columna si no existe
     return df
 
 # Función para guardar inventario (asegurar dos decimales)
 def guardar_inventario(df):
     df["Precio"] = df["Precio"].round(2)  # Redondear precios antes de guardar
+    df["Demanda Estimada"] = df["Demanda Estimada"].round(2)  # Redondear demanda estimada
     df.to_csv(CSV_FILE, index=False)
 
 # Función para cargar ventas
 def cargar_ventas():
     if os.path.exists(VENTAS_FILE):
         df = pd.read_csv(VENTAS_FILE)
-        df["Precio Unitario"] = df["Precio Unitario"].round(2)  # Redondear precios en ventas también
+        df["Precio Unitario"] = df["Precio Unitario"].round(2)
         df["Total"] = df["Total"].round(2)
         return df
     return pd.DataFrame(columns=["Fecha", "ID", "Producto", "Cantidad Vendida", "Precio Unitario", "Total", "Usuario"])
@@ -72,6 +78,33 @@ def registrar_cambio(accion, id_producto, usuario):
         historial_existente = pd.read_csv(HISTORIAL_FILE)
         historial = pd.concat([historial_existente, historial], ignore_index=True)
     historial.to_csv(HISTORIAL_FILE, index=False)
+
+# Función para calcular demanda estimada con ARIMA
+def calcular_demanda_estimada(ventas, inventario, periodos_prediccion=30):
+    ventas["Fecha"] = pd.to_datetime(ventas["Fecha"])
+    inventario["Demanda Estimada"] = 0.0  # Reiniciar columna
+    
+    for id_prod in inventario["ID"].unique():
+        ventas_prod = ventas[ventas["ID"] == id_prod].copy()
+        if not ventas_prod.empty and len(ventas_prod) > 5:  # Necesitamos suficientes datos
+            # Agregar ventas por día
+            ventas_diarias = ventas_prod.groupby(ventas_prod["Fecha"].dt.date)["Cantidad Vendida"].sum().reset_index()
+            ventas_diarias.set_index("Fecha", inplace=True)
+            serie_temporal = ventas_diarias["Cantidad Vendida"].resample("D").sum().fillna(0)
+            
+            # Ajustar modelo ARIMA
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    modelo = ARIMA(serie_temporal, order=(1, 1, 1))  # Orden sencillo por defecto
+                    resultado = modelo.fit()
+                    prediccion = resultado.forecast(steps=periodos_prediccion)
+                    demanda_estimada = prediccion.mean()  # Promedio de la predicción
+                    inventario.loc[inventario["ID"] == id_prod, "Demanda Estimada"] = demanda_estimada
+            except Exception as e:
+                st.warning(f"No se pudo calcular la demanda para ID {id_prod}: {str(e)}")
+    
+    return inventario
 
 # Autenticación
 if "authenticated" not in st.session_state:
@@ -110,6 +143,11 @@ else:
         if inventario.empty:
             st.warning("El inventario está vacío.")
         else:
+            if st.button("Calcular Demanda Estimada"):
+                inventario = calcular_demanda_estimada(ventas, inventario)
+                guardar_inventario(inventario)
+                st.success("Demanda estimada calculada con éxito!")
+
             col1, col2 = st.columns(2)
             with col1:
                 categoria_filtro = st.selectbox("Filtrar por Categoría", ["Todas"] + inventario["Categoría"].unique().tolist())
@@ -129,8 +167,8 @@ else:
                     return ['background-color: yellow'] * len(row)
                 return [''] * len(row)
             
-            # Formatear precios a dos decimales en la visualización
-            st.dataframe(inventario_filtrado.style.apply(color_stock, axis=1).format({"Precio": "{:.2f}"}))
+            # Formatear precios y demanda a dos decimales en la visualización
+            st.dataframe(inventario_filtrado.style.apply(color_stock, axis=1).format({"Precio": "{:.2f}", "Demanda Estimada": "{:.2f}"}))
             st.download_button(
                 label="Descargar Inventario como CSV",
                 data=inventario_filtrado.to_csv(index=False),
@@ -192,7 +230,6 @@ else:
         hoy = datetime.now().strftime("%Y-%m-%d")
         ventas_hoy = ventas[ventas["Fecha"].str.startswith(hoy)]
         if not ventas_hoy.empty:
-            # Formatear precios a dos decimales en la visualización de ventas
             st.dataframe(ventas_hoy.style.format({"Precio Unitario": "{:.2f}", "Total": "{:.2f}"}))
             total_dia = ventas_hoy["Total"].sum()
             st.write(f"**Total de Ventas del Día:** ${total_dia:.2f}")
@@ -215,10 +252,11 @@ else:
                     elif nuevo_inventario["Cantidad"].lt(0).any() or nuevo_inventario["Precio"].lt(0).any():
                         st.error("Cantidad y Precio no pueden ser negativos.")
                     else:
-                        # Redondear precios a dos decimales antes de cargar
                         nuevo_inventario["Precio"] = nuevo_inventario["Precio"].round(2)
+                        if "Demanda Estimada" not in nuevo_inventario.columns:
+                            nuevo_inventario["Demanda Estimada"] = 0.0
                         st.write("Vista previa del CSV:")
-                        st.dataframe(nuevo_inventario.style.format({"Precio": "{:.2f}"}))
+                        st.dataframe(nuevo_inventario.style.format({"Precio": "{:.2f}", "Demanda Estimada": "{:.2f}"}))
                         if st.button("Confirmar Carga"):
                             inventario = nuevo_inventario.copy()
                             guardar_inventario(inventario)
@@ -246,10 +284,11 @@ else:
                     elif nuevos_productos["Cantidad"].lt(0).any() or nuevos_productos["Precio"].lt(0).any():
                         st.error("Cantidad y Precio no pueden ser negativos.")
                     else:
-                        # Redondear precios a dos decimales antes de agregar
                         nuevos_productos["Precio"] = nuevos_productos["Precio"].round(2)
+                        if "Demanda Estimada" not in nuevos_productos.columns:
+                            nuevos_productos["Demanda Estimada"] = 0.0
                         st.write("Vista previa de los nuevos productos:")
-                        st.dataframe(nuevos_productos.style.format({"Precio": "{:.2f}"}))
+                        st.dataframe(nuevos_productos.style.format({"Precio": "{:.2f}", "Demanda Estimada": "{:.2f}"}))
                         if st.button("Confirmar Agregado"):
                             inventario = pd.concat([inventario, nuevos_productos], ignore_index=True)
                             guardar_inventario(inventario)
@@ -271,7 +310,7 @@ else:
                 inventario["Proveedor"].str.contains(busqueda, case=False, na=False)
             ]
             if not resultado.empty:
-                st.dataframe(resultado.style.format({"Precio": "{:.2f}"}))
+                st.dataframe(resultado.style.format({"Precio": "{:.2f}", "Demanda Estimada": "{:.2f}"}))
             else:
                 st.warning("No se encontraron productos con ese criterio.")
 
@@ -326,7 +365,7 @@ else:
             st.write(f"**Valor Total del Inventario:** ${total_valor:.2f}")
             st.write(f"**Productos con Bajo Stock (menos de 5 unidades):** {len(bajo_stock)}")
             if not bajo_stock.empty:
-                st.dataframe(bajo_stock.style.format({"Precio": "{:.2f}"}))
+                st.dataframe(bajo_stock.style.format({"Precio": "{:.2f}", "Demanda Estimada": "{:.2f}"}))
             
             fig = px.bar(inventario.groupby("Categoría")["Cantidad"].sum().reset_index(), 
                         x="Categoría", y="Cantidad", title="Cantidad por Categoría")

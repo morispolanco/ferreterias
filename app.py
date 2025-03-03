@@ -19,37 +19,45 @@ HISTORIAL_FILE = "historial_cambios.csv"
 VENTAS_FILE = "ventas.csv"
 USERS = {"admin": "ferreteria123"}  # Usuario y contraseña simples
 
-# Datos de demostración
+# Datos de demostración con precios en dos decimales
 DEMO_DATA = pd.DataFrame({
     "ID": ["001", "002", "003", "004", "005"],
     "Producto": ["Taladro Eléctrico", "Pintura Blanca", "Tornillos 1/4", "Martillo", "Cable 10m"],
     "Categoría": ["Herramientas", "Pinturas", "Materiales", "Herramientas", "Electricidad"],
     "Cantidad": [10, 5, 100, 8, 15],
-    "Precio": [150.50, 25.75, 0.10, 12.00, 8.90],
+    "Precio": [150.50, 25.75, 0.10, 12.00, 8.90],  # Precios ya con dos decimales
     "Proveedor": ["Bosch", "Sherwin", "Genérico", "Truper", "Voltex"],
     "Última Actualización": ["2025-03-02 10:00:00", "2025-03-01 15:30:00", "2025-02-28 09:15:00", 
                             "2025-03-01 12:00:00", "2025-03-02 14:20:00"]
 })
 
-# Función para cargar inventario (sin caché para siempre reflejar el archivo actualizado)
+# Función para cargar inventario (redondear precios a dos decimales)
 def cargar_inventario():
     if not os.path.exists(CSV_FILE):
         DEMO_DATA.to_csv(CSV_FILE, index=False)
         return DEMO_DATA.copy()
-    return pd.read_csv(CSV_FILE)
+    df = pd.read_csv(CSV_FILE)
+    df["Precio"] = df["Precio"].round(2)  # Redondear precios a dos decimales al cargar
+    return df
 
-# Función para guardar inventario
+# Función para guardar inventario (asegurar dos decimales)
 def guardar_inventario(df):
+    df["Precio"] = df["Precio"].round(2)  # Redondear precios antes de guardar
     df.to_csv(CSV_FILE, index=False)
 
 # Función para cargar ventas
 def cargar_ventas():
     if os.path.exists(VENTAS_FILE):
-        return pd.read_csv(VENTAS_FILE)
+        df = pd.read_csv(VENTAS_FILE)
+        df["Precio Unitario"] = df["Precio Unitario"].round(2)  # Redondear precios en ventas también
+        df["Total"] = df["Total"].round(2)
+        return df
     return pd.DataFrame(columns=["Fecha", "ID", "Producto", "Cantidad Vendida", "Precio Unitario", "Total", "Usuario"])
 
 # Función para guardar ventas
 def guardar_ventas(df):
+    df["Precio Unitario"] = df["Precio Unitario"].round(2)
+    df["Total"] = df["Total"].round(2)
     df.to_csv(VENTAS_FILE, index=False)
 
 # Registrar cambios en historial
@@ -81,7 +89,7 @@ if not st.session_state.authenticated:
         else:
             st.error("Usuario o contraseña incorrectos.")
 else:
-    # Cargar inventario y ventas (recargamos cada vez para reflejar cambios)
+    # Cargar inventario y ventas
     inventario = cargar_inventario()
     ventas = cargar_ventas()
 
@@ -121,7 +129,8 @@ else:
                     return ['background-color: yellow'] * len(row)
                 return [''] * len(row)
             
-            st.dataframe(inventario_filtrado.style.apply(color_stock, axis=1))
+            # Formatear precios a dos decimales en la visualización
+            st.dataframe(inventario_filtrado.style.apply(color_stock, axis=1).format({"Precio": "{:.2f}"}))
             st.download_button(
                 label="Descargar Inventario como CSV",
                 data=inventario_filtrado.to_csv(index=False),
@@ -168,7 +177,7 @@ else:
                                 guardar_ventas(ventas)
 
                                 registrar_cambio("Venta", id_venta, st.session_state.usuario)
-                                st.success(f"Venta registrada: {cantidad_vendida} de '{producto['Producto']}' por ${total_venta:,.2f}")
+                                st.success(f"Venta registrada: {cantidad_vendida} de '{producto['Producto']}' por ${total_venta:.2f}")
                                 inventario = cargar_inventario()
                             else:
                                 st.error(f"No hay suficiente stock. Disponible: {producto['Cantidad']}")
@@ -183,9 +192,10 @@ else:
         hoy = datetime.now().strftime("%Y-%m-%d")
         ventas_hoy = ventas[ventas["Fecha"].str.startswith(hoy)]
         if not ventas_hoy.empty:
-            st.dataframe(ventas_hoy)
+            # Formatear precios a dos decimales en la visualización de ventas
+            st.dataframe(ventas_hoy.style.format({"Precio Unitario": "{:.2f}", "Total": "{:.2f}"}))
             total_dia = ventas_hoy["Total"].sum()
-            st.write(f"**Total de Ventas del Día:** ${total_dia:,.2f}")
+            st.write(f"**Total de Ventas del Día:** ${total_dia:.2f}")
         else:
             st.info("No hay ventas registradas para hoy.")
 
@@ -205,8 +215,10 @@ else:
                     elif nuevo_inventario["Cantidad"].lt(0).any() or nuevo_inventario["Precio"].lt(0).any():
                         st.error("Cantidad y Precio no pueden ser negativos.")
                     else:
+                        # Redondear precios a dos decimales antes de cargar
+                        nuevo_inventario["Precio"] = nuevo_inventario["Precio"].round(2)
                         st.write("Vista previa del CSV:")
-                        st.dataframe(nuevo_inventario)
+                        st.dataframe(nuevo_inventario.style.format({"Precio": "{:.2f}"}))
                         if st.button("Confirmar Carga"):
                             inventario = nuevo_inventario.copy()
                             guardar_inventario(inventario)
@@ -234,8 +246,10 @@ else:
                     elif nuevos_productos["Cantidad"].lt(0).any() or nuevos_productos["Precio"].lt(0).any():
                         st.error("Cantidad y Precio no pueden ser negativos.")
                     else:
+                        # Redondear precios a dos decimales antes de agregar
+                        nuevos_productos["Precio"] = nuevos_productos["Precio"].round(2)
                         st.write("Vista previa de los nuevos productos:")
-                        st.dataframe(nuevos_productos)
+                        st.dataframe(nuevos_productos.style.format({"Precio": "{:.2f}"}))
                         if st.button("Confirmar Agregado"):
                             inventario = pd.concat([inventario, nuevos_productos], ignore_index=True)
                             guardar_inventario(inventario)
@@ -257,7 +271,7 @@ else:
                 inventario["Proveedor"].str.contains(busqueda, case=False, na=False)
             ]
             if not resultado.empty:
-                st.dataframe(resultado)
+                st.dataframe(resultado.style.format({"Precio": "{:.2f}"}))
             else:
                 st.warning("No se encontraron productos con ese criterio.")
 
@@ -272,13 +286,13 @@ else:
                 categoria = st.selectbox("Categoría", ["Herramientas", "Materiales", "Pinturas", "Electricidad", "Otros"], 
                                        index=["Herramientas", "Materiales", "Pinturas", "Electricidad", "Otros"].index(producto["Categoría"]))
                 cantidad = st.number_input("Cantidad", min_value=0, step=1, value=int(producto["Cantidad"]))
-                precio = st.number_input("Precio Unitario", min_value=0.0, step=0.01, value=float(producto["Precio"]))
+                precio = st.number_input("Precio Unitario", min_value=0.0, step=0.01, value=float(producto["Precio"]), format="%.2f")
                 proveedor = st.text_input("Proveedor", value=producto["Proveedor"])
                 submit_edit = st.form_submit_button(label="Guardar Cambios")
 
                 if submit_edit:
                     inventario.loc[inventario["ID"] == id_editar, ["Producto", "Categoría", "Cantidad", "Precio", "Proveedor", "Última Actualización"]] = \
-                        [nombre, categoria, cantidad, precio, proveedor, datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+                        [nombre, categoria, cantidad, round(precio, 2), proveedor, datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
                     guardar_inventario(inventario)
                     registrar_cambio("Editar", id_editar, st.session_state.usuario)
                     st.success(f"Producto con ID '{id_editar}' actualizado con éxito!")
@@ -309,10 +323,10 @@ else:
         else:
             total_valor = (inventario["Cantidad"] * inventario["Precio"]).sum()
             bajo_stock = inventario[inventario["Cantidad"] < 5]
-            st.write(f"**Valor Total del Inventario:** ${total_valor:,.2f}")
+            st.write(f"**Valor Total del Inventario:** ${total_valor:.2f}")
             st.write(f"**Productos con Bajo Stock (menos de 5 unidades):** {len(bajo_stock)}")
             if not bajo_stock.empty:
-                st.dataframe(bajo_stock)
+                st.dataframe(bajo_stock.style.format({"Precio": "{:.2f}"}))
             
             fig = px.bar(inventario.groupby("Categoría")["Cantidad"].sum().reset_index(), 
                         x="Categoría", y="Cantidad", title="Cantidad por Categoría")
@@ -354,7 +368,7 @@ else:
         st.subheader("Historial de Cambios")
         if os.path.exists(HISTORIAL_FILE):
             historial = pd.read_csv(HISTORIAL_FILE)
-            st.dataframe(historial.sort_values("Fecha", ascending=False))
+            st.dataframe(historial)
         else:
             st.info("No hay historial de cambios registrado aún.")
 

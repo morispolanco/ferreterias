@@ -17,12 +17,26 @@ CSV_FILE = "inventario_ferreteria.csv"
 HISTORIAL_FILE = "historial_cambios.csv"
 USERS = {"admin": "ferreteria123"}  # Usuario y contraseña simples
 
+# Datos de demostración
+DEMO_DATA = pd.DataFrame({
+    "ID": ["001", "002", "003", "004", "005"],
+    "Producto": ["Taladro Eléctrico", "Pintura Blanca", "Tornillos 1/4", "Martillo", "Cable 10m"],
+    "Categoría": ["Herramientas", "Pinturas", "Materiales", "Herramientas", "Electricidad"],
+    "Cantidad": [10, 5, 100, 8, 15],
+    "Precio": [150.50, 25.75, 0.10, 12.00, 8.90],
+    "Proveedor": ["Bosch", "Sherwin", "Genérico", "Truper", "Voltex"],
+    "Última Actualización": ["2025-03-02 10:00:00", "2025-03-01 15:30:00", "2025-02-28 09:15:00", 
+                            "2025-03-01 12:00:00", "2025-03-02 14:20:00"]
+})
+
 # Función para cargar inventario
 @st.cache_data
 def cargar_inventario():
-    if os.path.exists(CSV_FILE):
-        return pd.read_csv(CSV_FILE)
-    return pd.DataFrame(columns=["ID", "Producto", "Categoría", "Cantidad", "Precio", "Proveedor", "Última Actualización"])
+    if not os.path.exists(CSV_FILE):
+        # Si no existe el archivo, usar datos de demostración
+        DEMO_DATA.to_csv(CSV_FILE, index=False)
+        return DEMO_DATA.copy()
+    return pd.read_csv(CSV_FILE)
 
 # Función para guardar inventario
 def guardar_inventario(df):
@@ -63,20 +77,46 @@ else:
     # Barra lateral
     menu = st.sidebar.selectbox(
         "Menú",
-        ["Ver Inventario", "Agregar Producto", "Buscar Producto", "Editar Producto", "Eliminar Producto", "Reporte", "Historial"]
+        ["Ver Inventario", "Agregar Producto", "Buscar Producto", "Editar Producto", "Eliminar Producto", "Reporte", "Historial", "Cargar CSV"]
     )
     st.sidebar.write(f"Usuario: {st.session_state.usuario}")
     if st.sidebar.button("Cerrar Sesión"):
         st.session_state.authenticated = False
         st.session_state.pop("usuario")
 
+    # Opción: Cargar CSV
+    if menu == "Cargar CSV":
+        st.subheader("Cargar Inventario desde CSV")
+        uploaded_file = st.file_uploader("Selecciona un archivo CSV", type=["csv"])
+        if uploaded_file is not None:
+            try:
+                nuevo_inventario = pd.read_csv(uploaded_file)
+                columnas_esperadas = ["ID", "Producto", "Categoría", "Cantidad", "Precio", "Proveedor", "Última Actualización"]
+                if not all(col in nuevo_inventario.columns for col in columnas_esperadas):
+                    st.error("El CSV debe contener las columnas: ID, Producto, Categoría, Cantidad, Precio, Proveedor, Última Actualización")
+                else:
+                    if nuevo_inventario["ID"].duplicated().any():
+                        st.error("El CSV contiene IDs duplicados. Corrige el archivo y vuelve a intentarlo.")
+                    elif nuevo_inventario["Cantidad"].lt(0).any() or nuevo_inventario["Precio"].lt(0).any():
+                        st.error("Cantidad y Precio no pueden ser negativos.")
+                    else:
+                        st.write("Vista previa del CSV:")
+                        st.dataframe(nuevo_inventario)
+                        if st.button("Confirmar Carga"):
+                            inventario = nuevo_inventario.copy()
+                            guardar_inventario(inventario)
+                            registrar_cambio("Cargar CSV", "Todos", st.session_state.usuario)
+                            st.success("Inventario actualizado desde el CSV con éxito!")
+            except Exception as e:
+                st.error(f"Error al procesar el archivo: {str(e)}")
+        st.info("El CSV debe tener las columnas: ID, Producto, Categoría, Cantidad, Precio, Proveedor, Última Actualización.")
+
     # Opción 1: Ver Inventario
-    if menu == "Ver Inventario":
+    elif menu == "Ver Inventario":
         st.subheader("Inventario Actual")
         if inventario.empty:
             st.warning("El inventario está vacío.")
         else:
-            # Filtros
             col1, col2 = st.columns(2)
             with col1:
                 categoria_filtro = st.selectbox("Filtrar por Categoría", ["Todas"] + inventario["Categoría"].unique().tolist())
@@ -89,7 +129,6 @@ else:
             if proveedor_filtro != "Todos":
                 inventario_filtrado = inventario_filtrado[inventario_filtrado["Proveedor"] == proveedor_filtro]
             
-            # Resaltar bajo stock o agotados
             def color_stock(row):
                 if row["Cantidad"] == 0:
                     return ['background-color: red'] * len(row)
@@ -205,17 +244,15 @@ else:
             if not bajo_stock.empty:
                 st.dataframe(bajo_stock)
             
-            # Gráfico de categorías
             fig = px.bar(inventario.groupby("Categoría")["Cantidad"].sum().reset_index(), 
                         x="Categoría", y="Cantidad", title="Cantidad por Categoría")
             st.plotly_chart(fig)
 
-            # Generar PDF
             buffer = BytesIO()
             doc = SimpleDocTemplate(buffer, pagesize=letter)
             elements = []
             elements.append(Paragraph("Reporte de Inventario", style=TableStyle([('FONTSIZE', (0, 0), (-1, -1), 14)])))
-            data = [inventario.columnstolist()] + inventario.values.tolist()
+            data = [inventario.columns.tolist()] + inventario.values.tolist()
             table = Table(data)
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.grey),

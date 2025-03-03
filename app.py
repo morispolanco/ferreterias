@@ -304,7 +304,7 @@ else:
     # Opción 8: Registrar Ventas
     elif menu == "Registrar Ventas":
         st.subheader("Registrar Ventas del Día")
-        # Crear lista de productos para el selectbox
+        # Crear lista de productos para el selectbox con IDs reales del inventario
         productos_disponibles = [f"{row['Producto']} (ID: {row['ID']}, Stock: {row['Cantidad']})" 
                                 for _, row in inventario.iterrows() if row['Cantidad'] > 0]
         
@@ -316,8 +316,10 @@ else:
 
                 if submit_venta:
                     try:
-                        # Extraer ID del producto seleccionado de manera robusta
+                        # Extraer ID del producto seleccionado
                         id_venta = producto_seleccionado.split("ID: ")[1].split(",")[0].strip()
+                        st.write(f"ID extraído para depuración: '{id_venta}'")  # Depuración
+
                         # Verificar que el ID existe en el inventario
                         if id_venta in inventario["ID"].values:
                             producto = inventario[inventario["ID"] == id_venta].iloc[0]
@@ -347,7 +349,7 @@ else:
                             else:
                                 st.error(f"No hay suficiente stock. Disponible: {producto['Cantidad']}")
                         else:
-                            st.error(f"El ID '{id_venta}' no se encontró en el inventario.")
+                            st.error(f"El ID '{id_venta}' no se encontró en el inventario. IDs disponibles: {list(inventario['ID'])}")
                     except IndexError:
                         st.error("Error al procesar el producto seleccionado. Verifica el formato del menú.")
             else:

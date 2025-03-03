@@ -21,7 +21,7 @@ USERS = {"admin": "ferreteria123"}  # Usuario y contraseña simples
 
 # Datos de demostración
 DEMO_DATA = pd.DataFrame({
-    "ID": ["001", "002", "003", "004", "005"],
+    "ID": ["001", "002", "003", "004", "005"],  # IDs como strings con ceros
     "Producto": ["Taladro Eléctrico", "Pintura Blanca", "Tornillos 1/4", "Martillo", "Cable 10m"],
     "Categoría": ["Herramientas", "Pinturas", "Materiales", "Herramientas", "Electricidad"],
     "Cantidad": [10, 5, 100, 8, 15],
@@ -304,7 +304,8 @@ else:
     # Opción 8: Registrar Ventas
     elif menu == "Registrar Ventas":
         st.subheader("Registrar Ventas del Día")
-        # Crear lista de productos para el selectbox con IDs reales del inventario
+        # Asegurar que IDs sean strings y usar los IDs reales del inventario
+        inventario["ID"] = inventario["ID"].astype(str)  # Convertir IDs a strings
         productos_disponibles = [f"{row['Producto']} (ID: {row['ID']}, Stock: {row['Cantidad']})" 
                                 for _, row in inventario.iterrows() if row['Cantidad'] > 0]
         

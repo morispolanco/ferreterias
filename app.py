@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import plotly.express as px
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
@@ -21,7 +21,7 @@ HISTORIAL_FILE = "historial_cambios.csv"
 VENTAS_FILE = "ventas.csv"
 USERS = {"admin": "ferreteria123"}  # Usuario y contraseña simples
 
-# Datos de demostración con precios en dos decimales
+# Datos de demostración para inventario
 DEMO_DATA = pd.DataFrame({
     "ID": ["001", "002", "003", "004", "005"],
     "Producto": ["Taladro Eléctrico", "Pintura Blanca", "Tornillos 1/4", "Martillo", "Cable 10m"],
@@ -33,6 +33,21 @@ DEMO_DATA = pd.DataFrame({
                             "2025-03-01 12:00:00", "2025-03-02 14:20:00"],
     "Demanda Estimada": [0.0, 0.0, 0.0, 0.0, 0.0]  # Nueva columna inicializada
 })
+
+# Datos de demostración para ventas históricas (30 días)
+fecha_inicio = datetime(2025, 2, 1)  # Fecha inicial: 1 de febrero de 2025
+DEMO_VENTAS = []
+for i in range(30):  # 30 días de ventas
+    fecha = fecha_inicio + timedelta(days=i)
+    # Ventas simuladas para cada producto
+    DEMO_VENTAS.extend([
+        {"Fecha": fecha.strftime("%Y-%m-%d 09:00:00"), "ID": "001", "Producto": "Taladro Eléctrico", "Cantidad Vendida": 2, "Precio Unitario": 150.50, "Total": 301.00, "Usuario": "admin"},
+        {"Fecha": fecha.strftime("%Y-%m-%d 10:00:00"), "ID": "002", "Producto": "Pintura Blanca", "Cantidad Vendida": 1, "Precio Unitario": 25.75, "Total": 25.75, "Usuario": "admin"},
+        {"Fecha": fecha.strftime("%Y-%m-%d 11:00:00"), "ID": "003", "Producto": "Tornillos 1/4", "Cantidad Vendida": 10, "Precio Unitario": 0.10, "Total": 1.00, "Usuario": "admin"},
+        {"Fecha": fecha.strftime("%Y-%m-%d 12:00:00"), "ID": "004", "Producto": "Martillo", "Cantidad Vendida": 1, "Precio Unitario": 12.00, "Total": 12.00, "Usuario": "admin"},
+        {"Fecha": fecha.strftime("%Y-%m-%d 13:00:00"), "ID": "005", "Producto": "Cable 10m", "Cantidad Vendida": 3, "Precio Unitario": 8.90, "Total": 26.70, "Usuario": "admin"}
+    ])
+DEMO_VENTAS = pd.DataFrame(DEMO_VENTAS)
 
 # Función para cargar inventario (redondear precios a dos decimales)
 def cargar_inventario():
@@ -53,12 +68,13 @@ def guardar_inventario(df):
 
 # Función para cargar ventas
 def cargar_ventas():
-    if os.path.exists(VENTAS_FILE):
-        df = pd.read_csv(VENTAS_FILE)
-        df["Precio Unitario"] = df["Precio Unitario"].round(2)
-        df["Total"] = df["Total"].round(2)
-        return df
-    return pd.DataFrame(columns=["Fecha", "ID", "Producto", "Cantidad Vendida", "Precio Unitario", "Total", "Usuario"])
+    if not os.path.exists(VENTAS_FILE):
+        DEMO_VENTAS.to_csv(VENTAS_FILE, index=False)
+        return DEMO_VENTAS.copy()
+    df = pd.read_csv(VENTAS_FILE)
+    df["Precio Unitario"] = df["Precio Unitario"].round(2)
+    df["Total"] = df["Total"].round(2)
+    return df
 
 # Función para guardar ventas
 def guardar_ventas(df):
